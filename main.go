@@ -32,13 +32,52 @@ func init() {
 	}
 }
 
+// extractISO pulls -I[fmt] and --iso-8601[=fmt] out of args before flag.Parse.
+// Returns the ISO precision level ("" if not specified) and the remaining args.
+func extractISO(args []string) (level string, rest []string) {
+	for _, a := range args {
+		switch {
+		case a == "-I" || a == "--iso-8601":
+			level = "date"
+		case strings.HasPrefix(a, "-I") && len(a) > 2:
+			level = expandISOLevel(a[2:])
+		case strings.HasPrefix(a, "--iso-8601="):
+			level = expandISOLevel(a[len("--iso-8601="):])
+		default:
+			rest = append(rest, a)
+		}
+	}
+	return
+}
+
+// expandISOLevel expands single-letter abbreviations to their full level name.
+func expandISOLevel(s string) string {
+	switch s {
+	case "h":
+		return "hours"
+	case "m":
+		return "minutes"
+	case "s":
+		return "seconds"
+	case "n":
+		return "ns"
+	default:
+		return s
+	}
+}
+
 func main() {
+	// Extract -I / --iso-8601 manually before flag.Parse because Go's flag
+	// package does not support optional-value flags or concatenated short flags
+	// like -Is or -Iseconds.
+	isoLevel, cleanArgs := extractISO(os.Args[1:])
+	os.Args = append(os.Args[:1], cleanArgs...)
+
 	var (
-		dateStr  = flag.String("d", "", "display time described by STRING, not 'now'")
+		dateStr = flag.String("d", "", "display time described by STRING, not 'now'")
 		dateFile = flag.String("f", "", "like -d, use each line of DATEFILE")
 		refFile  = flag.String("r", "", "display the last modification time of FILE")
 		utc      = flag.Bool("u", false, "print or set Coordinated Universal Time (UTC)")
-		iso      = flag.String("I", "\x00", "output date/time in ISO 8601 format")
 		rfc2822  = flag.Bool("R", false, "output date and time in RFC 5322 format")
 		rfc3339  = flag.String("rfc-3339", "", "output date and time in RFC 3339 format (date|seconds|ns)")
 		debug    = flag.Bool("debug", false, "annotate the parsed date, and warn about questionable usage")
@@ -62,15 +101,6 @@ func main() {
 		if strings.HasPrefix(a, "+") {
 			formatArg = a[1:]
 			break
-		}
-	}
-
-	// Resolve ISO flag: -I with no value means "date"
-	isoLevel := ""
-	if *iso != "\x00" {
-		isoLevel = *iso
-		if isoLevel == "" {
-			isoLevel = "date"
 		}
 	}
 
@@ -144,13 +174,13 @@ func formatISO(t time.Time, level string) string {
 	case "date":
 		return t.Format("2006-01-02")
 	case "hours":
-		return t.Format("2006-01-02T15-07:00")
+		return t.Format("2006-01-02T15Z07:00")
 	case "minutes":
-		return t.Format("2006-01-02T15:04-07:00")
+		return t.Format("2006-01-02T15:04Z07:00")
 	case "seconds":
-		return t.Format("2006-01-02T15:04:05-07:00")
+		return t.Format(time.RFC3339) // "2006-01-02T15:04:05Z07:00"
 	case "ns":
-		return t.Format("2006-01-02T15:04:05.000000000-07:00")
+		return t.Format(time.RFC3339Nano) // "2006-01-02T15:04:05.999999999Z07:00"
 	default:
 		fatalf("invalid argument %q for --iso-8601", level)
 		return ""
@@ -429,21 +459,6 @@ func mondayWeek(t time.Time) (int, int) {
 
 // ─── date string parser ───────────────────────────────────────────────────────
 
-var monthNames = map[string]time.Month{
-	"jan": time.January, "january": time.January,
-	"feb": time.February, "february": time.February,
-	"mar": time.March, "march": time.March,
-	"apr": time.April, "april": time.April,
-	"may": time.May,
-	"jun": time.June, "june": time.June,
-	"jul": time.July, "july": time.July,
-	"aug": time.August, "august": time.August,
-	"sep": time.September, "september": time.September,
-	"oct": time.October, "october": time.October,
-	"nov": time.November, "november": time.November,
-	"dec": time.December, "december": time.December,
-}
-
 var dayNames = map[string]time.Weekday{
 	"sun": time.Sunday, "sunday": time.Sunday,
 	"mon": time.Monday, "monday": time.Monday,
@@ -454,80 +469,129 @@ var dayNames = map[string]time.Weekday{
 	"sat": time.Saturday, "saturday": time.Saturday,
 }
 
-// parseDate parses a human-readable date string similar to GNU date's -d option.
+// absoluteLayouts are tried in order against the full input string.
+var absoluteLayouts = []string{
+	// ISO 8601 with timezone
+	time.RFC3339Nano,
+	time.RFC3339,
+	// ISO 8601 without timezone
+	"2006-01-02T15:04:05.999999999",
+	"2006-01-02T15:04:05",
+	"2006-01-02T15:04",
+	// Date + time, space separator
+	"2006-01-02 15:04:05.999999999",
+	"2006-01-02 15:04:05",
+	"2006-01-02 15:04",
+	// Date only (ISO)
+	"2006-01-02",
+	// Slash date + time
+	"01/02/2006 15:04:05",
+	"01/02/2006 15:04",
+	"01/02/06 15:04:05",
+	"01/02/06 15:04",
+	// Slash date only
+	"01/02/2006",
+	"01/02/06",
+	// Full month name, day, year (comma optional)
+	"January 2, 2006 15:04:05",
+	"January 2, 2006 15:04",
+	"January 2, 2006",
+	"January 2 2006 15:04:05",
+	"January 2 2006 15:04",
+	"January 2 2006",
+	// Abbreviated month name, day, year (comma optional)
+	"Jan 2, 2006 15:04:05",
+	"Jan 2, 2006 15:04",
+	"Jan 2, 2006",
+	"Jan 2 2006 15:04:05",
+	"Jan 2 2006 15:04",
+	"Jan 2 2006",
+	// Day first, full month name
+	"2 January 2006 15:04:05",
+	"2 January 2006 15:04",
+	"2 January 2006",
+	// Day first, abbreviated month name
+	"2 Jan 2006 15:04:05",
+	"2 Jan 2006 15:04",
+	"2 Jan 2006",
+	// DD-Mon-YYYY
+	"02-Jan-2006 15:04:05",
+	"02-Jan-2006 15:04",
+	"02-Jan-2006",
+	// Month name + year only
+	"January 2006",
+	"Jan 2006",
+	// RFC / ctime variants
+	"02 Jan 2006 15:04:05 MST",
+	"02 Jan 2006 15:04:05 -0700",
+	time.RFC1123Z,
+	time.RFC1123,
+	time.RFC822Z,
+	time.RFC822,
+	"Mon, 02 Jan 2006 15:04:05 -0700",
+	"Mon Jan 2 15:04:05 MST 2006",
+	"Mon Jan 2 15:04:05 2006",
+}
+
+// timeOnlyLayouts are tried when the input looks like a bare time; today's date is attached.
+var timeOnlyLayouts = []string{
+	// 24-hour with timezone
+	"15:04:05 MST",
+	"15:04:05 -0700",
+	"15:04 MST",
+	"15:04 -0700",
+	// 24-hour bare
+	"15:04:05",
+	"15:04",
+	// 12-hour with timezone
+	"3:04:05 PM MST",
+	"3:04:05 PM -0700",
+	"3:04 PM MST",
+	"3:04 PM -0700",
+	// 12-hour bare (Go is case-insensitive for AM/PM values)
+	"3:04:05 PM",
+	"3:04:05PM",
+	"3:04 PM",
+	"3:04PM",
+	"3 PM",
+	"3PM",
+}
+
+// parseDate parses a human-readable date string (GNU date -d compatible).
 func parseDate(s string) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	now := time.Now()
 
-	// Unix @timestamp
+	// @epoch  (e.g. @1750464000)
 	if strings.HasPrefix(s, "@") {
-		epoch, err := strconv.ParseInt(s[1:], 10, 64)
+		epoch, err := strconv.ParseInt(strings.TrimSpace(s[1:]), 10, 64)
 		if err != nil {
 			return time.Time{}, fmt.Errorf("invalid epoch %q", s)
 		}
 		return time.Unix(epoch, 0), nil
 	}
 
-	lower := strings.ToLower(s)
+	// Normalize slash dates before layout matching (fixes "1/1/2026 06:00" etc.)
+	norm := normalizeSlashDate(s)
 
-	// Quick keywords
-	switch lower {
-	case "now":
-		return now, nil
-	case "today":
-		y, m, d := now.Date()
-		return time.Date(y, m, d, 0, 0, 0, 0, now.Location()), nil
-	case "yesterday":
-		return midnight(now.AddDate(0, 0, -1)), nil
-	case "tomorrow":
-		return midnight(now.AddDate(0, 0, 1)), nil
-	}
-
-	// Normalize slash-separated dates: pad single-digit month/day with leading zero
-	s = normalizeSlashDate(s)
-
-	// Try standard Go layouts first (most specific to least)
-	layouts := []string{
-		time.RFC3339Nano,
-		time.RFC3339,
-		"2006-01-02T15:04:05",
-		"2006-01-02 15:04:05",
-		"2006-01-02 15:04",
-		"2006-01-02",
-		"01/02/2006",
-		"01/02/06",
-		"January 2, 2006",
-		"Jan 2, 2006",
-		"Jan 2 2006",
-		"2 January 2006",
-		"2 Jan 2006",
-		"January 2006",
-		"Jan 2006",
-		"02 Jan 2006 15:04:05 MST",
-		"02 Jan 2006 15:04:05 -0700",
-		time.RFC1123Z,
-		time.RFC1123,
-		time.RFC822Z,
-		time.RFC822,
-		"Mon, 02 Jan 2006 15:04:05 -0700",
-		"Mon Jan 2 15:04:05 MST 2006",
-		"Mon Jan 2 15:04:05 2006",
-		"15:04:05",
-		"15:04",
-	}
-	for _, layout := range layouts {
-		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
-			// If only time was parsed, attach today's date
-			if layout == "15:04:05" || layout == "15:04" {
-				y, m, d := now.Date()
-				t = time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), 0, now.Location())
-			}
+	// Try absolute layouts
+	for _, layout := range absoluteLayouts {
+		if t, err := time.ParseInLocation(layout, norm, time.Local); err == nil {
 			return t, nil
 		}
 	}
 
-	// Relative expressions: "N unit [ago]", "next/last weekday", etc.
-	if t, ok := parseRelative(s, now); ok {
+	// Try time-only layouts; attach today's date
+	for _, layout := range timeOnlyLayouts {
+		if t, err := time.ParseInLocation(layout, norm, time.Local); err == nil {
+			y, m, d := now.Date()
+			return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), now.Location()), nil
+		}
+	}
+
+	// Try relative expressions, with an optional time-of-day suffix
+	// e.g. "today 08:00", "next monday 9am", "2 days ago 06:00"
+	if t, ok := parseRelativeExpr(s, now); ok {
 		return t, nil
 	}
 
@@ -539,50 +603,175 @@ func midnight(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
-// normalizeSlashDate pads single-digit month and day in M/D/YYYY or M/D/YY.
+// normalizeSlashDate pads single-digit month/day in M/D/YYYY (or M/D/YY [HH:MM...]).
+// Only the month and day tokens are required to be purely numeric.
 func normalizeSlashDate(s string) string {
-	parts := strings.Split(s, "/")
-	if len(parts) != 3 {
+	first := strings.Index(s, "/")
+	if first < 0 {
 		return s
 	}
-	// only touch parts that are purely numeric
-	for _, p := range parts {
-		for _, c := range p {
-			if c < '0' || c > '9' {
-				return s
+	second := strings.Index(s[first+1:], "/")
+	if second < 0 {
+		return s
+	}
+	second += first + 1
+
+	month := s[:first]
+	day := s[first+1 : second]
+	rest := s[second+1:] // year, possibly followed by a time
+
+	for _, c := range month {
+		if c < '0' || c > '9' {
+			return s
+		}
+	}
+	for _, c := range day {
+		if c < '0' || c > '9' {
+			return s
+		}
+	}
+	if len(month) == 1 {
+		month = "0" + month
+	}
+	if len(day) == 1 {
+		day = "0" + day
+	}
+	return month + "/" + day + "/" + rest
+}
+
+// parseRelativeExpr parses a relative date expression with an optional time suffix.
+// Examples: "today", "yesterday 08:00", "next monday 9am", "2 days ago"
+func parseRelativeExpr(s string, now time.Time) (time.Time, bool) {
+	datePart, timePart := splitOffTimeSuffix(s)
+
+	base, ok := parseRelativeBase(strings.TrimSpace(datePart), now)
+	if !ok {
+		return time.Time{}, false
+	}
+
+	if timePart == "" {
+		return base, true
+	}
+
+	if t, ok2 := applyTimeSuffix(strings.TrimSpace(timePart), base); ok2 {
+		return t, true
+	}
+	return base, true
+}
+
+// splitOffTimeSuffix splits "yesterday 08:00" into ("yesterday", "08:00").
+// It checks the last 1 or 2 tokens for a time-of-day pattern.
+func splitOffTimeSuffix(s string) (datePart, timePart string) {
+	tokens := strings.Fields(s)
+	n := len(tokens)
+	if n < 2 {
+		return s, ""
+	}
+
+	// Last two tokens: time + AM/PM  (e.g. "9:30 AM")
+	if n >= 3 {
+		last := strings.ToLower(tokens[n-1])
+		if last == "am" || last == "pm" {
+			if isTimeToken(strings.ToLower(tokens[n-2])) {
+				return strings.Join(tokens[:n-2], " "), strings.Join(tokens[n-2:], " ")
 			}
 		}
 	}
-	if len(parts[0]) == 1 {
-		parts[0] = "0" + parts[0]
+
+	// Last token alone is a time (e.g. "08:00", "9am")
+	if isTimeToken(strings.ToLower(tokens[n-1])) {
+		return strings.Join(tokens[:n-1], " "), tokens[n-1]
 	}
-	if len(parts[1]) == 1 {
-		parts[1] = "0" + parts[1]
-	}
-	return strings.Join(parts, "/")
+
+	return s, ""
 }
 
-// parseRelative handles strings like:
-//   "1 day ago", "2 hours", "3 weeks ago", "next monday", "last friday",
-//   "+1 hour", "-2 days", "1 year 2 months ago"
-func parseRelative(s string, now time.Time) (time.Time, bool) {
-	lower := strings.ToLower(strings.TrimSpace(s))
+// isTimeToken returns true if s looks like a standalone time-of-day token.
+func isTimeToken(s string) bool {
+	s = strings.ToLower(s)
+	for _, sfx := range []string{"am", "pm"} {
+		if strings.HasSuffix(s, sfx) {
+			return isClockFace(s[:len(s)-2])
+		}
+	}
+	return isClockFace(s)
+}
+
+// isClockFace returns true for bare digit strings like "15", "15:04", "15:04:05".
+func isClockFace(s string) bool {
+	if s == "" {
+		return false
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) == 0 || len(parts) > 3 {
+		return false
+	}
+	for _, p := range parts {
+		if p == "" {
+			return false
+		}
+		for _, c := range p {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// applyTimeSuffix parses a time-only string and applies it to the date portion of base.
+func applyTimeSuffix(s string, base time.Time) (time.Time, bool) {
+	// Go's time parser requires uppercase AM/PM; normalize case.
+	norm := normalizeAMPM(s)
+	for _, layout := range timeOnlyLayouts {
+		if t, err := time.ParseInLocation(layout, norm, base.Location()); err == nil {
+			y, m, d := base.Date()
+			return time.Date(y, m, d, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), base.Location()), true
+		}
+	}
+	return time.Time{}, false
+}
+
+// normalizeAMPM uppercases a trailing "am" or "pm" suffix so Go's parser accepts it.
+func normalizeAMPM(s string) string {
+	lower := strings.ToLower(s)
+	for _, sfx := range []string{"am", "pm"} {
+		if strings.HasSuffix(lower, sfx) {
+			return s[:len(s)-2] + strings.ToUpper(sfx)
+		}
+	}
+	return s
+}
+
+// parseRelativeBase parses a pure relative expression (no time suffix).
+func parseRelativeBase(s string, now time.Time) (time.Time, bool) {
+	lower := strings.ToLower(s)
+
+	switch lower {
+	case "now":
+		return now, true
+	case "today":
+		y, m, d := now.Date()
+		return time.Date(y, m, d, 0, 0, 0, 0, now.Location()), true
+	case "yesterday":
+		return midnight(now.AddDate(0, 0, -1)), true
+	case "tomorrow":
+		return midnight(now.AddDate(0, 0, 1)), true
+	}
 
 	// "next <weekday>"
 	if strings.HasPrefix(lower, "next ") {
-		wd, ok := dayNames[strings.TrimSpace(lower[5:])]
-		if ok {
+		if wd, ok := dayNames[strings.TrimSpace(lower[5:])]; ok {
 			return nextWeekday(now, wd), true
 		}
 	}
-	// "last <weekday>"
+	// "last <weekday|week|month|year>"
 	if strings.HasPrefix(lower, "last ") {
-		wd, ok := dayNames[strings.TrimSpace(lower[5:])]
-		if ok {
+		rest := strings.TrimSpace(lower[5:])
+		if wd, ok := dayNames[rest]; ok {
 			return lastWeekday(now, wd), true
 		}
-		// "last month", "last year", "last week"
-		switch strings.TrimSpace(lower[5:]) {
+		switch rest {
 		case "week":
 			return now.AddDate(0, 0, -7), true
 		case "month":
@@ -593,55 +782,49 @@ func parseRelative(s string, now time.Time) (time.Time, bool) {
 	}
 	// "this <weekday>"
 	if strings.HasPrefix(lower, "this ") {
-		wd, ok := dayNames[strings.TrimSpace(lower[5:])]
-		if ok {
+		if wd, ok := dayNames[strings.TrimSpace(lower[5:])]; ok {
 			return thisWeekday(now, wd), true
 		}
 	}
 
-	// Tokenise into number-unit pairs, optionally followed by "ago"
+	// "+N unit" / "-N unit" / "N unit ago" / "N unit N unit ago"
+	return parseOffset(lower, now)
+}
+
+// parseOffset handles "N unit [ago]", "+N unit", "-N unit", and combinations.
+func parseOffset(s string, now time.Time) (time.Time, bool) {
 	ago := false
-	if strings.HasSuffix(lower, " ago") {
+	if strings.HasSuffix(s, " ago") {
 		ago = true
-		lower = lower[:len(lower)-4]
+		s = s[:len(s)-4]
 	}
 
-	// leading sign
 	sign := 1
-	if len(lower) > 0 && (lower[0] == '+' || lower[0] == '-') {
-		if lower[0] == '-' {
+	if len(s) > 0 && (s[0] == '+' || s[0] == '-') {
+		if s[0] == '-' {
 			sign = -1
 		}
-		lower = lower[1:]
+		s = s[1:]
 	}
 	if ago {
 		sign = -sign
 	}
 
-	// parse one or more "N unit" pairs
-	tokens := strings.Fields(lower)
+	tokens := strings.Fields(s)
 	if len(tokens) == 0 {
 		return time.Time{}, false
 	}
 
 	t := now
-	i := 0
 	matched := false
-	for i < len(tokens) {
-		numStr := tokens[i]
-		n, err := strconv.ParseFloat(numStr, 64)
+	for i := 0; i+1 < len(tokens); i += 2 {
+		n, err := strconv.ParseFloat(tokens[i], 64)
 		if err != nil {
-			break
+			return time.Time{}, false
 		}
-		i++
-		if i >= len(tokens) {
-			break
-		}
-		unit := strings.TrimRight(tokens[i], "s") // plurals
-		i++
-		matched = true
-
+		unit := strings.TrimRight(strings.ToLower(tokens[i+1]), "s")
 		n *= float64(sign)
+
 		switch unit {
 		case "second", "sec":
 			t = t.Add(time.Duration(n * float64(time.Second)))
@@ -658,12 +841,9 @@ func parseRelative(s string, now time.Time) (time.Time, bool) {
 		case "year":
 			t = t.AddDate(int(math.Round(n)), 0, 0)
 		default:
-			// check if it's a weekday used as a unit (e.g., "2 mondays ago")
-			if _, ok := dayNames[unit]; ok {
-				return time.Time{}, false
-			}
-			matched = false
+			return time.Time{}, false
 		}
+		matched = true
 	}
 
 	if matched {
@@ -709,10 +889,12 @@ Display or format the current date and time.
 Mandatory arguments to long options are mandatory for short options too.
   -d, --date=STRING          display time described by STRING, not 'now'
   -f, --file=DATEFILE        like --date; once for each line of DATEFILE
-  -I[FMT], --iso-8601[=FMT] output date/time in ISO 8601 format.
-                               FMT='date' for date only (the default),
-                               'hours', 'minutes', 'seconds', or 'ns'
-                               for date and time to the indicated precision.
+  -I, --iso-8601 [<FMT>]    output date/time in ISO 8601 format.
+                             FMT='date' for date only (the default),
+                             'hours', 'minutes', 'seconds', or 'ns'
+                             for date and time to the indicated precision.
+                             Example: 2006-08-14T02:34:56-06:00
+                             [possible values: date, hours, minutes, seconds, ns]
   -R, --rfc-email            output date and time in RFC 5322 format.
                                Example: Mon, 14 Aug 2006 02:34:56 -0600
       --rfc-3339=FMT         output date/time in RFC 3339 format.

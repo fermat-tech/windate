@@ -6,7 +6,19 @@ A Windows port of the Unix `date` command, compatible with GNU date. Displays or
 
 ## Installation
 
+**Option 1 — Download binary**
+
 Download `windate.exe` from the [latest release](https://github.com/fermat-tech/windate/releases/latest) and place it anywhere on your `PATH`.
+
+**Option 2 — Go install**
+
+If you have [Go 1.22+](https://go.dev/dl/) installed:
+
+```powershell
+go install github.com/fermat-tech/windate@latest
+```
+
+This builds and places `windate.exe` in your `GOBIN` directory (typically `%USERPROFILE%\go\bin`), which should already be on your `PATH`.
 
 ---
 

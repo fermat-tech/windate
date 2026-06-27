@@ -1,3 +1,18 @@
+// windate is a Windows port of the Unix date command, compatible with GNU date.
+//
+// It displays or formats the current date and time, with support for custom
+// format strings, human-readable date expressions (-d), ISO 8601 (-I),
+// RFC 5322 (-R), RFC 3339 (--rfc-3339), file modification times (-r),
+// UTC output (-u), and the TZ environment variable.
+//
+// Usage:
+//
+//	windate [OPTION]... [+FORMAT]
+//	windate -d "next monday 9am" "+%A, %B %e %Y"
+//	windate -Iseconds
+//	windate -R
+//
+// See https://github.com/fermat-tech/windate for full documentation.
 package main
 
 import (

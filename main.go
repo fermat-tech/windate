@@ -33,16 +33,22 @@ var localLoc *time.Location
 
 func init() {
 	progName = strings.TrimSuffix(filepath.Base(os.Args[0]), filepath.Ext(os.Args[0]))
-	// Go on Windows doesn't honour TZ; load it explicitly.
-	if tz := os.Getenv("TZ"); tz != "" {
-		if loc, err := time.LoadLocation(tz); err == nil {
+	// Go on Windows doesn't honour TZ; resolve it explicitly, matching GNU
+	// date/glibc semantics:
+	//   - TZ unset               -> system local time
+	//   - TZ set to empty string -> UTC
+	//   - TZ set to a valid zone -> that zone
+	//   - TZ set to an invalid   -> UTC (silently, as glibc does)
+	if tz, ok := os.LookupEnv("TZ"); ok {
+		if tz == "" {
+			localLoc = time.UTC
+		} else if loc, err := time.LoadLocation(tz); err == nil {
 			localLoc = loc
-			time.Local = loc
 		} else {
-			fmt.Fprintf(os.Stderr, "%s: warning: unknown timezone %q\n", progName, tz)
+			localLoc = time.UTC
 		}
-	}
-	if localLoc == nil {
+		time.Local = localLoc
+	} else {
 		localLoc = time.Local
 	}
 }
@@ -163,6 +169,10 @@ func main() {
 	for _, t := range times {
 		if *utc {
 			t = t.UTC()
+		} else {
+			// Display in the local zone (honours TZ), converting any zone
+			// carried in from the parsed input (e.g. a trailing Z or offset).
+			t = t.In(localLoc)
 		}
 
 		var out string

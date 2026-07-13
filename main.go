@@ -532,6 +532,23 @@ var absoluteLayouts = []string{
 	"January 2 2006 15:04 -0700",
 	"January 2 2006 15:04",
 	"January 2 2006",
+	// Month name, day, time, zone, year LAST (e.g. "July 19 11:59 PM PDT 2026")
+	"January 2 3:04:05 PM MST 2006",
+	"January 2 3:04:05 PM -0700 2006",
+	"January 2 3:04 PM MST 2006",
+	"January 2 3:04 PM -0700 2006",
+	"January 2 15:04:05 MST 2006",
+	"January 2 15:04:05 -0700 2006",
+	"January 2 15:04 MST 2006",
+	"January 2 15:04 -0700 2006",
+	"Jan 2 3:04:05 PM MST 2006",
+	"Jan 2 3:04:05 PM -0700 2006",
+	"Jan 2 3:04 PM MST 2006",
+	"Jan 2 3:04 PM -0700 2006",
+	"Jan 2 15:04:05 MST 2006",
+	"Jan 2 15:04:05 -0700 2006",
+	"Jan 2 15:04 MST 2006",
+	"Jan 2 15:04 -0700 2006",
 	// Abbreviated month name, day, year (comma optional)
 	"Jan 2, 2006 15:04:05 MST",
 	"Jan 2, 2006 15:04:05 -0700",
@@ -615,6 +632,10 @@ func parseDate(s string) (time.Time, error) {
 	// Normalize slash dates before layout matching (fixes "1/1/2026 06:00" etc.)
 	norm := normalizeSlashDate(s)
 
+	// Go's parser can't map timezone abbreviations (PDT, EST, ...) to offsets,
+	// so replace any recognized abbreviation token with its numeric offset.
+	norm = normalizeZoneAbbrev(norm)
+
 	// Try absolute layouts
 	for _, layout := range absoluteLayouts {
 		if t, err := time.ParseInLocation(layout, norm, time.Local); err == nil {
@@ -642,6 +663,47 @@ func parseDate(s string) (time.Time, error) {
 func midnight(t time.Time) time.Time {
 	y, m, d := t.Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+// zoneAbbrevOffset maps common timezone abbreviations to fixed numeric offsets,
+// matching how GNU date resolves them (each abbreviation has a single fixed
+// offset regardless of date).
+var zoneAbbrevOffset = map[string]string{
+	"UT": "+0000", "UTC": "+0000", "GMT": "+0000", "Z": "+0000",
+	// North America
+	"EST": "-0500", "EDT": "-0400",
+	"CST": "-0600", "CDT": "-0500",
+	"MST": "-0700", "MDT": "-0600",
+	"PST": "-0800", "PDT": "-0700",
+	"AKST": "-0900", "AKDT": "-0800",
+	"HST": "-1000", "HDT": "-0900",
+	"AST": "-0400", "ADT": "-0300",
+	"NST": "-0330", "NDT": "-0230",
+	// Europe
+	"BST": "+0100", "WET": "+0000", "WEST": "+0100",
+	"CET": "+0100", "CEST": "+0200", "EET": "+0200", "EEST": "+0300",
+	// Asia / Pacific
+	"JST": "+0900", "KST": "+0900",
+	"AEST": "+1000", "AEDT": "+1100",
+	"AWST": "+0800", "ACST": "+0930", "ACDT": "+1030",
+	"NZST": "+1200", "NZDT": "+1300",
+}
+
+// normalizeZoneAbbrev replaces any standalone timezone-abbreviation token with
+// its numeric offset so Go's time parser applies the correct offset.
+func normalizeZoneAbbrev(s string) string {
+	fields := strings.Fields(s)
+	changed := false
+	for i, f := range fields {
+		if off, ok := zoneAbbrevOffset[strings.ToUpper(f)]; ok {
+			fields[i] = off
+			changed = true
+		}
+	}
+	if !changed {
+		return s
+	}
+	return strings.Join(fields, " ")
 }
 
 // normalizeSlashDate pads single-digit month/day in M/D/YYYY (or M/D/YY [HH:MM...]).

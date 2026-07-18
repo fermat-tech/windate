@@ -120,7 +120,7 @@ func main() {
 	os.Args = append(os.Args[:1], cleanArgs...)
 
 	var (
-		dateStr = flag.String("d", "", "display time described by STRING, not 'now'")
+		dateStr  = flag.String("d", "", "display time described by STRING, not 'now'")
 		dateFile = flag.String("f", "", "like -d, use each line of DATEFILE")
 		refFile  = flag.String("r", "", "display the last modification time of FILE")
 		utc      = flag.Bool("u", false, "print or set Coordinated Universal Time (UTC)")
@@ -546,6 +546,12 @@ var absoluteLayouts = []string{
 	"January 2, 2006 15:04:05 MST",
 	"January 2, 2006 15:04:05 -0700",
 	"January 2, 2006 15:04:05",
+	"January 2, 2006 3:04:05 PM MST",
+	"January 2, 2006 3:04:05 PM -0700",
+	"January 2, 2006 3:04:05 PM",
+	"January 2, 2006 3:04 PM MST",
+	"January 2, 2006 3:04 PM -0700",
+	"January 2, 2006 3:04 PM",
 	"January 2, 2006 15:04 MST",
 	"January 2, 2006 15:04 -0700",
 	"January 2, 2006 15:04",
@@ -584,6 +590,12 @@ var absoluteLayouts = []string{
 	"Jan 2, 2006 15:04:05 MST",
 	"Jan 2, 2006 15:04:05 -0700",
 	"Jan 2, 2006 15:04:05",
+	"Jan 2, 2006 3:04:05 PM MST",
+	"Jan 2, 2006 3:04:05 PM -0700",
+	"Jan 2, 2006 3:04:05 PM",
+	"Jan 2, 2006 3:04 PM MST",
+	"Jan 2, 2006 3:04 PM -0700",
+	"Jan 2, 2006 3:04 PM",
 	"Jan 2, 2006 15:04 MST",
 	"Jan 2, 2006 15:04 -0700",
 	"Jan 2, 2006 15:04",
@@ -666,8 +678,12 @@ func parseDate(s string) (time.Time, error) {
 		return time.Unix(epoch, 0), nil
 	}
 
+	// Strip a leading "Weekday," prefix (e.g. "Sunday, July 19, 2026 ...").
+	// GNU date accepts a leading weekday name; the remaining date is what matters.
+	norm := stripLeadingWeekday(s)
+
 	// Normalize slash dates before layout matching (fixes "1/1/2026 06:00" etc.)
-	norm := normalizeSlashDate(s)
+	norm = normalizeSlashDate(norm)
 
 	// Go's parser can't map timezone abbreviations (PDT, EST, ...) to offsets,
 	// so replace any recognized abbreviation token with its numeric offset.
@@ -700,6 +716,22 @@ func parseDate(s string) (time.Time, error) {
 func midnight(t time.Time) time.Time {
 	y, m, d := t.Date()
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
+}
+
+// stripLeadingWeekday removes a leading "Weekday," prefix (full or abbreviated,
+// case-insensitive), e.g. "Sunday, July 19, 2026" -> "July 19, 2026". Only a
+// weekday immediately followed by a comma is stripped, so it never interferes
+// with ctime-style "Mon Jan 2 ..." layouts.
+func stripLeadingWeekday(s string) string {
+	comma := strings.Index(s, ",")
+	if comma < 0 {
+		return s
+	}
+	first := strings.TrimSpace(s[:comma])
+	if _, ok := dayNames[strings.ToLower(first)]; ok {
+		return strings.TrimSpace(s[comma+1:])
+	}
+	return s
 }
 
 // zoneAbbrevOffset maps common timezone abbreviations to fixed numeric offsets,
@@ -1109,4 +1141,3 @@ DATE STRING examples:
   "@1234567890"  (Unix timestamp)
 `, progName, progName)
 }
-

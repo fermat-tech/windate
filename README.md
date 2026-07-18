@@ -55,6 +55,7 @@ windate "+%Y-%m-%d"
 | `-R` | `--rfc-email` | Output in RFC 5322 format |
 | | `--rfc-3339=FMT` | Output in RFC 3339 format (see below) |
 | | `--debug` | Print the parsed date to stderr (useful with `-d`) |
+| | `--version` | Print version and license information, then exit |
 
 ---
 
@@ -259,6 +260,9 @@ Valid timezone names follow the IANA format, e.g. `America/Chicago`, `Asia/Tokyo
 ```powershell
 # Current date and time
 windate
+
+# Version and license
+windate --version
 
 # ISO 8601 date
 windate -I

@@ -61,7 +61,8 @@ func extractISO(args []string) (level string, rest []string) {
 		case a == "-I" || a == "--iso-8601":
 			level = "date"
 		case strings.HasPrefix(a, "-I") && len(a) > 2:
-			level = expandISOLevel(a[2:])
+			// Accept both -Ins and -I=ns (optional '=' after the short flag).
+			level = expandISOLevel(strings.TrimPrefix(a[2:], "="))
 		case strings.HasPrefix(a, "--iso-8601="):
 			level = expandISOLevel(a[len("--iso-8601="):])
 		default:

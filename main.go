@@ -53,6 +53,25 @@ func init() {
 	}
 }
 
+// version is the release tag (e.g. "v1.2.5"). Overridden at build time via
+// -ldflags "-X main.version=vX.Y.Z"; "dev" for a plain `go build` with no tag
+// supplied.
+var version = "dev"
+
+// printVersion mirrors `bash --version`'s layout, using progName (the stem of
+// the invoked path, per the rename-friendly identity convention — see
+// CLAUDE.md) instead of a fixed "windate", and this project's actual license
+// instead of bash's GPL.
+func printVersion() {
+	fmt.Printf(`%s, version %s
+Copyright (c) 2026 fermat-tech
+License: MIT <https://opensource.org/licenses/MIT>
+
+This is free software; you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+`, progName, version)
+}
+
 // extractISO pulls -I[fmt] and --iso-8601[=fmt] out of args before flag.Parse.
 // Returns the ISO precision level ("" if not specified) and the remaining args.
 func extractISO(args []string) (level string, rest []string) {
@@ -89,6 +108,11 @@ func expandISOLevel(s string) string {
 }
 
 func main() {
+	if len(os.Args) >= 2 && os.Args[1] == "--version" {
+		printVersion()
+		os.Exit(0)
+	}
+
 	// Extract -I / --iso-8601 manually before flag.Parse because Go's flag
 	// package does not support optional-value flags or concatenated short flags
 	// like -Is or -Iseconds.

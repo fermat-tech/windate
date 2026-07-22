@@ -552,6 +552,9 @@ var absoluteLayouts = []string{
 	"January 2, 2006 3:04 PM MST",
 	"January 2, 2006 3:04 PM -0700",
 	"January 2, 2006 3:04 PM",
+	"January 2, 2006 3 PM MST",
+	"January 2, 2006 3 PM -0700",
+	"January 2, 2006 3 PM",
 	"January 2, 2006 15:04 MST",
 	"January 2, 2006 15:04 -0700",
 	"January 2, 2006 15:04",
@@ -596,6 +599,9 @@ var absoluteLayouts = []string{
 	"Jan 2, 2006 3:04 PM MST",
 	"Jan 2, 2006 3:04 PM -0700",
 	"Jan 2, 2006 3:04 PM",
+	"Jan 2, 2006 3 PM MST",
+	"Jan 2, 2006 3 PM -0700",
+	"Jan 2, 2006 3 PM",
 	"Jan 2, 2006 15:04 MST",
 	"Jan 2, 2006 15:04 -0700",
 	"Jan 2, 2006 15:04",
@@ -685,6 +691,10 @@ func parseDate(s string) (time.Time, error) {
 	// Normalize slash dates before layout matching (fixes "1/1/2026 06:00" etc.)
 	norm = normalizeSlashDate(norm)
 
+	// Normalize an attached or lower-case meridiem ("3:59pm" -> "3:59 PM") so a
+	// single set of "3:04 PM" layouts covers every spelling.
+	norm = normalizeMeridiem(norm)
+
 	// Go's parser can't map timezone abbreviations (PDT, EST, ...) to offsets,
 	// so replace any recognized abbreviation token with its numeric offset.
 	norm = normalizeZoneAbbrev(norm)
@@ -756,6 +766,41 @@ var zoneAbbrevOffset = map[string]string{
 	"AEST": "+1000", "AEDT": "+1100",
 	"AWST": "+0800", "ACST": "+0930", "ACDT": "+1030",
 	"NZST": "+1200", "NZDT": "+1300",
+}
+
+// normalizeMeridiem rewrites AM/PM markers into a single canonical spelling:
+// a separate, upper-case token following the time ("3:59pm" -> "3:59 PM",
+// "3:59 pm" -> "3:59 PM"). Go's parser matches the meridiem case-sensitively
+// against the layout, so this lets one set of "3:04 PM" layouts cover every
+// spelling users type.
+func normalizeMeridiem(s string) string {
+	fields := strings.Fields(s)
+	out := make([]string, 0, len(fields)+1)
+	changed := false
+
+	for _, f := range fields {
+		lower := strings.ToLower(f)
+		switch {
+		// Standalone meridiem token, e.g. "pm".
+		case lower == "am" || lower == "pm":
+			out = append(out, strings.ToUpper(lower))
+			if f != strings.ToUpper(lower) {
+				changed = true
+			}
+		// Meridiem attached to a clock face, e.g. "3:59pm".
+		case len(lower) > 2 && (strings.HasSuffix(lower, "am") || strings.HasSuffix(lower, "pm")) &&
+			isClockFace(lower[:len(lower)-2]):
+			out = append(out, f[:len(f)-2], strings.ToUpper(lower[len(lower)-2:]))
+			changed = true
+		default:
+			out = append(out, f)
+		}
+	}
+
+	if !changed {
+		return s
+	}
+	return strings.Join(out, " ")
 }
 
 // normalizeZoneAbbrev replaces any standalone timezone-abbreviation token with
